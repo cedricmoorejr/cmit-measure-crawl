@@ -6,8 +6,8 @@
 CMIT Scraper: Main Execution Flow
 Author: AQMP
 Description: Automates data extraction from the CMIT portal
-						 using structured configuration and Selenium-based 
-						 scraping.
+	     using structured configuration and Selenium-based 
+	     scraping.
 ─────────────────────────────────────────────────────────────
 """
 
