@@ -49,7 +49,13 @@ def install_missing_packages(requirements_path="requirements.txt"):
                     • You may need to upgrade pip:  python -m pip install --upgrade pip
                 """))
 
+
+def run_main():
+    from main  import full_crawl # entry point
+    full_crawl()    
+    
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     install_missing_packages()
-    import main
+    run_main()
+
