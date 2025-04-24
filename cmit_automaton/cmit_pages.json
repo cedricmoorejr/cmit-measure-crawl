@@ -1,0 +1,29 @@
+{
+  "page": {
+    "Properties": {
+      "url": "https://cmit.cms.gov/cmit/#/MeasureView?variantId={variantId}&sectionNumber=1",
+      "section_number": 1,
+      "css_selector": "app-measure-properties div.row.margin-top-10"
+    },
+    "Characteristics": {
+      "url": "https://cmit.cms.gov/cmit/#/MeasureView?variantId={variantId}&sectionNumber=3",
+      "section_number": 3,
+      "css_selector": "app-characteristics div.row.margin-top-10"
+    },
+    "Cascade of Meaningful Measures": {
+      "url": "https://cmit.cms.gov/cmit/#/MeasureView?variantId={variantId}&sectionNumber=4",
+      "section_number": 4,
+      "css_selector": "app-cascade div.row.margin-top-10"
+    },
+    "Groups": {
+      "url": "https://cmit.cms.gov/cmit/#/MeasureView?variantId={variantId}&sectionNumber=5",
+      "section_number": 5,
+      "css_selector": "app-groups div.row.margin-top-10"
+    },
+    "Reporting Status": {
+      "url": "https://cmit.cms.gov/cmit/#/MeasureView?variantId={variantId}&sectionNumber=7",
+      "section_number": 7,
+      "css_selector": "app-programs div.row.margin-top-10"
+    }
+  }
+}
