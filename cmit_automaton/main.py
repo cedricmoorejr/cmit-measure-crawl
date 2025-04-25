@@ -71,7 +71,3 @@ def crawl():
 def full_crawl():
     flattened = flatten_results(crawl(), OUTFILE)
     logging.info(" Export complete → %s", OUTFILE)
-
-if __name__ == "__main__":
-    flattened = flatten_results(crawl(), OUTFILE)
-    logging.info(" Export complete → %s", OUTFILE)
