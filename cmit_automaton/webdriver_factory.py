@@ -17,6 +17,11 @@ from pathlib import Path
 import os
 import logging
 from typing import Optional, Union
+import json
+import urllib.request
+import zipfile
+import shutil
+import tempfile
 
 #────────── Third-party library imports (from PyPI or other package sources) ─────────────────────────────────
 from selenium import webdriver
@@ -30,19 +35,104 @@ try:
 except ModuleNotFoundError:
     _HAS_WDM = False
 
+_SETTINGS_FILE = Path("settings.yaml")
+
 
 # Configuration helpers
 # ---------------------------------------------------------------------------
+# def _latest_stable_driver() -> str:
+#     """
+#     Return the latest 'Stable' chromedriver version string
+#     from Google's last-known-good-versions JSON.
+#     """
+#     url = (
+#         "https://googlechromelabs.github.io/chrome-for-testing/"
+#         "last-known-good-versions.json"
+#     )
+#     with urllib.request.urlopen(url, timeout=10) as resp:
+#         meta = json.load(resp)
+#     return meta["channels"]["Stable"]["version"]
+
+def _download_stable_from_lkgd() -> Path:
+    """
+    Download the latest Stable chromedriver for Windows (64-bit if possible)
+    using Google's last-known-good-versions-with-downloads.json.
+
+    Returns
+    -------
+    Path : full path to the extracted chromedriver.exe
+    """
+    LKGD_URL = (
+        "https://googlechromelabs.github.io/chrome-for-testing/"
+        "last-known-good-versions-with-downloads.json"
+    )
+
+    # 1) fetch JSON
+    with urllib.request.urlopen(LKGD_URL, timeout=10) as resp:
+        data = json.load(resp)
+
+    stable = data["channels"]["Stable"]
+    version = stable["version"]
+
+    # 2) pick win64 or win32 download URL
+    dl_list = stable["downloads"]["chromedriver"]
+    win_url = None
+    for plat in ("win64", "win32"):
+        match = next((d for d in dl_list if d["platform"] == plat), None)
+        if match:
+            win_url = match["url"]
+            break
+    if not win_url:
+        raise RuntimeError("No Windows chromedriver link found in LKGD JSON")
+
+    # 3) download to temp file
+    tmp_dir = Path(tempfile.mkdtemp(prefix="chromedriver_lkgd_"))
+    zip_path = tmp_dir / "driver.zip"
+    urllib.request.urlretrieve(win_url, zip_path)
+
+    # 4) extract chromedriver to cache folder
+    cache_dir = Path.home() / ".cache" / "chromedriver" / version
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(zip_path) as zf:
+        # archive contains e.g. chromedriver.exe and LICENSE.chromedriver
+        for member in zf.namelist():
+            if member.endswith("chromedriver.exe"):
+                zf.extract(member, cache_dir)
+                extracted = cache_dir / member
+                final_path = cache_dir / "chromedriver.exe"
+                shutil.move(extracted, final_path)
+                break
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    return final_path
+
 def _load_settings() -> dict:
     """
     Loads project settings from settings.yaml, if it exists.
     """
-    settings_path = Path("settings.yaml")
-    if settings_path.exists():
-        with settings_path.open("r") as f:
-            return yaml.safe_load(f) or {}
+    if _settings := (_SETTINGS_FILE.read_text() if _SETTINGS_FILE.exists() else ""):
+        return yaml.safe_load(_settings) or {}
     return {}
 
+def _write_settings(settings: dict) -> None:
+    """
+    Writes the given settings dictionary to settings.yaml in YAML format.
+    """
+    _SETTINGS_FILE.write_text(
+        yaml.safe_dump(settings, sort_keys=False, default_flow_style=False)
+    )
+
+def _update_yaml_if_needed(new_path: Union[str, Path]) -> None:
+    """
+    Persist *new_path* to settings.yaml if it's different.
+    """
+    new_path = str(new_path)
+    cfg = _load_settings()
+    if cfg.get("chromedriver_path") != new_path:
+        cfg["chromedriver_path"] = new_path
+        _write_settings(cfg)
+        logging.info("Updated settings.yaml with new chromedriver path.")
 
 def _default_driver_path() -> Optional[Path]:
     """
@@ -65,7 +155,6 @@ def _default_driver_path() -> Optional[Path]:
 
     # 3. Give up
     return None
-
 
 def _build_options(headless: bool) -> Options:
     """
@@ -119,32 +208,53 @@ def get_driver(*, headless: bool = True, driver_path: Optional[Union[str, os.Pat
     logging.getLogger("selenium").setLevel(logging.WARNING)
     options = _build_options(headless=headless)
 
-    # Explicit argument wins
+    # 1 ─ explicit argument
     if driver_path:
-        service = Service(str(driver_path))
-        return webdriver.Chrome(service=service, options=options)
+        drv = webdriver.Chrome(service=Service(str(driver_path)), options=options)
+        _update_yaml_if_needed(driver_path)
+        return drv
 
-    # Try default/local paths
-    local_path = _default_driver_path()
-    if local_path:
-        service = Service(str(local_path))
-        return webdriver.Chrome(service=service, options=options)
+    # 2 ─ settings.yaml
+    settings_path = _load_settings().get("chromedriver_path")
+    if settings_path:
+        p = Path(settings_path)
+        if p.is_file():
+            return webdriver.Chrome(service=Service(p), options=options)
+        else:
+            logging.warning("chromedriver_path in settings.yaml is not a file: %s", p)
 
-    # Selenium-manager (built into selenium ≥ 4.6)
+    # 3 ─ env var
+    env_path = os.getenv("CHROMEDRIVER_PATH")
+    if env_path and Path(env_path).exists():
+        return webdriver.Chrome(service=Service(env_path), options=options)
+
+    # 4 ─ Selenium Manager (built into selenium >=4.6)
     try:
-        logging.info("No local chromedriver found — falling back to Selenium Manager.")
-        return webdriver.Chrome(options=options)   # Service() with no exe path
+        driver = webdriver.Chrome(options=options)        # auto-resolves driver
+        _update_yaml_if_needed(driver.service.path)
+        return driver
     except Exception as sm_err:
-        logging.warning(f"Selenium Manager failed: {sm_err}")
+        logging.warning("Selenium Manager failed: %s", sm_err)
 
-    # Webdriver-manager (optional dependency)
+    # 5 ─ webdriver-manager as last resort
     if _HAS_WDM:
-        logging.info("Attempting automatic download via webdriver-manager …")
-        cdriver_path = ChromeDriverManager().install()
-        service = Service(cdriver_path)
-        return webdriver.Chrome(service=service, options=options)
+        try:
+            logging.info("Downloading chromedriver via webdriver-manager …")
+            wd_path = ChromeDriverManager().install()
+        except ValueError as e:
+            logging.warning("Exact driver unavailable (%s). Falling back to LKGD JSON …", e)
+            try:
+                wd_path = _download_stable_from_lkgd()
+                logging.info("Downloaded Stable chromedriver → %s", wd_path)
+            except Exception as lkgd_err:
+                logging.warning("LKGD download failed: %s", lkgd_err)
+                wd_path = None
 
-    # 5) give up
+        if wd_path:
+            _update_yaml_if_needed(wd_path)
+            return webdriver.Chrome(service=Service(str(wd_path)), options=options)   
+
+    # 6) give up
     raise FileNotFoundError(
         "Unable to locate or download chromedriver.\n"
         "• Install it manually and set CHROMEDRIVER_PATH, or\n"
@@ -164,7 +274,6 @@ class DriverContext:
         ...
     Automatically calls `driver.quit()` on exit.
     """
-
     def __init__(self, headless: bool = True, driver_path: Optional[Union[str, os.PathLike]] = None):
         self.headless = headless
         self.driver_path = driver_path
