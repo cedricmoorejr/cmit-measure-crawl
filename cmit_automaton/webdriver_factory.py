@@ -38,6 +38,17 @@ except ModuleNotFoundError:
 _SETTINGS_FILE = Path("settings.yaml")
 
 
+# Custom quoted string
+class QuotedString(str):
+    pass
+
+def quoted_str_representer(dumper, data):
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='"')
+
+yaml.add_representer(QuotedString, quoted_str_representer)
+
+
+
 # Configuration helpers
 # ---------------------------------------------------------------------------
 # def _latest_stable_driver() -> str:
@@ -119,9 +130,12 @@ def _write_settings(settings: dict) -> None:
     """
     Writes the given settings dictionary to settings.yaml in YAML format.
     """
-    _SETTINGS_FILE.write_text(
-        yaml.safe_dump(settings, sort_keys=False, default_flow_style=False)
-    )
+    # _SETTINGS_FILE.write_text(
+    #     yaml.safe_dump(settings, sort_keys=False, default_flow_style=False)
+    # )
+    # Write back to YAML file with explicit quoting
+    with open(_SETTINGS_FILE, 'w') as file:
+        yaml.dump(settings, file, sort_keys=False, default_flow_style=False)    
 
 def _update_yaml_if_needed(new_path: Union[str, Path]) -> None:
     """
@@ -131,6 +145,13 @@ def _update_yaml_if_needed(new_path: Union[str, Path]) -> None:
     cfg = _load_settings()
     if cfg.get("chromedriver_path") != new_path:
         cfg["chromedriver_path"] = new_path
+        
+        # Normalize path to POSIX style (forward slashes)
+        normalized_path = Path(cfg["chromedriver_path"]).as_posix()
+
+        # Explicitly wrap in custom quoted type
+        cfg['chromedriver_path'] = QuotedString(normalized_path)        
+        
         _write_settings(cfg)
         logging.info("Updated settings.yaml with new chromedriver path.")
 
@@ -245,6 +266,8 @@ def get_driver(*, headless: bool = True, driver_path: Optional[Union[str, os.Pat
             logging.warning("Exact driver unavailable (%s). Falling back to LKGD JSON …", e)
             try:
                 wd_path = _download_stable_from_lkgd()
+                if wd_path:
+                    wd_path = str(wd_path)                
                 logging.info("Downloaded Stable chromedriver → %s", wd_path)
             except Exception as lkgd_err:
                 logging.warning("LKGD download failed: %s", lkgd_err)
